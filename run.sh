@@ -11,6 +11,8 @@ fi
 docker run \
     -it --rm \
     --volume=$(pwd)/autoware-contents:/home/autoware/autoware-contents:ro \
+    --volume=$(pwd)/ros-bridge:/home/autoware/ros-bridge:rw \
+    --volume=$(pwd)/g29-wheel:/home/autoware/carla_ws/src/g29-wheel:rw \
     --env="DISPLAY=${DISPLAY}" \
     --privileged \
     --net=host \

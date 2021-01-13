@@ -2,3 +2,9 @@
 	path = autoware-contents
 	url = https://bitbucket.org/carla-simulator/autoware-contents.git
 	branch = master
+[submodule "ros-bridge"]
+	path = ros-bridge
+	url = https://github.com/shikishima-TasakiLab/ros-bridge.git
+[submodule "g29-wheel/ros-g29-force-feedback"]
+	path = g29-wheel/ros-g29-force-feedback
+	url = https://github.com/shikishima-TasakiLab/ros-g29-force-feedback.git
