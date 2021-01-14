@@ -32,6 +32,7 @@ RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
         python-wheel \
         ros-melodic-ackermann-msgs \
         ros-melodic-derived-object-msgs \
+        ros-melodic-joy* \
     && sudo rm -rf /var/lib/apt/lists/*
 RUN pip install simple-pid pygame networkx==2.2
 
