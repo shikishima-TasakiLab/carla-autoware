@@ -42,7 +42,7 @@ def joy_callback(data):
     cmd_msg = CarlaEgoVehicleControl()
     cmd_msg.throttle = (data.axes[2] + 1.0) * 0.5
     cmd_msg.brake = (data.axes[3] + 1.0) * 0.5
-    cmd_msg.steer = data.axes[0]
+    cmd_msg.steer = -data.axes[0]
 
     if data.buttons[19] == 1:
         reverse = False
