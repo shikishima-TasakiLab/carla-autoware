@@ -4,7 +4,7 @@ from g29_force_feedback.msg import ForceFeedback
 from std_msgs.msg import Bool
 import rospy
 
-feedback_pub = rospy.Publisher("/feedback", ForceFeedback, queue_size=10)
+feedback_pub = None
 manual = False
 
 def vehicle_status_callback(data):
@@ -24,10 +24,13 @@ def vehicle_control_manual_override_callback(data):
     manual = data.data
 
 def main():
+    global feedback_pub
+
     rospy.init_node('carla_feedback', anonymous=True)
     role_name = rospy.get_param("~role_name", "ego_vehicle")
     print role_name
 
+    feedback_pub = rospy.Publisher("/feedback", ForceFeedback, queue_size=10)
     vehicle_control_manual_override_sub = rospy.Subscriber("/carla/{}/vehicle_control_manual_override".format(role_name), Bool, vehicle_control_manual_override_callback)
     vehicle_status_sub = rospy.Subscriber("/carla/{}/vehicle_status".format(role_name), CarlaEgoVehicleStatus, vehicle_status_callback)
 

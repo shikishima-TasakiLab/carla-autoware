@@ -168,7 +168,7 @@ include_directories(
 # )
 
 catkin_install_python(
-  PROGRAMS src/g29_calra/feedback.py
+  PROGRAMS src/g29_calra/feedback.py src/g29_calra/joy2cmd.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
