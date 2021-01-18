@@ -40,7 +40,9 @@
       <remap from="/feedback" to="/g29/feedback"/>
     </node>
 
-    <node pkg="g29_carla" type="cv_manual_control" name="manual_control" required="true" output="screen"/>
+    <node pkg="g29_carla" type="cv_manual_control" name="manual_control" required="true" output="screen">
+      <param name="img_dir" value="/home/autoware/carla_ws/src/g29-wheel/g29_carla/img"/>
+    </node>
   </group>
 
 </launch>
