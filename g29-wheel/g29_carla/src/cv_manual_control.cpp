@@ -56,6 +56,8 @@ private:
     cv::Mat cv_handbrake_;
     cv::Mat cv_autopilot_;
 
+    void alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left, double_t alpha = 1.0);
+
     void vehicle_status_callback(const carla_msgs::CarlaEgoVehicleStatusConstPtr &vehicle_status);
     void g29_sub_callback(const sensor_msgs::JoyConstPtr &g29_msg);
     void view_sub_callback(const sensor_msgs::ImageConstPtr &view_msg);
@@ -96,6 +98,45 @@ CV_Manual_Control::CV_Manual_Control(std::string img_dir, std::string role_name,
 CV_Manual_Control::~CV_Manual_Control()
 {
     cv::destroyAllWindows();
+}
+
+void CV_Manual_Control::alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left, double_t alpha)
+{
+    cv::Size roi_size;
+    roi_size.width = (up_left.x + fg.cols > bg.cols)? (bg.cols - up_left.x) : (fg.cols);
+    roi_size.height = (up_left.y + fg.rows > bg.rows)? (bg.rows - up_left.y) : (fg.rows);
+
+    cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
+    cv::Rect d_roi_rect(up_left, roi_size);
+    cv::Mat s_roi = fg(s_roi_rect);
+    cv::Mat d_roi = bg(d_roi_rect);
+
+    cv::Mat s_bgra[4];
+    cv::Mat d_bgra[4];
+    cv::split(s_roi, s_bgra);
+    cv::split(d_roi, d_bgra);
+
+    cv::Mat s_bgr, d_bgr;
+    cv::merge(s_bgra, 3, s_bgr);
+    cv::merge(d_bgra, 3, d_bgr);
+
+    cv::Mat s_aaa[3] = {s_bgra[3], s_bgra[3], s_bgra[3]};
+    cv::Mat d_aaa[3] = {d_bgra[3], d_bgra[3], d_bgra[3]};
+    cv::Mat s_alpha, d_alpha;
+    cv::merge(s_aaa, 3, s_alpha);
+    cv::merge(d_aaa, 3, d_alpha);
+
+    cv::Mat s_bgr_f, s_alpha_f, d_bgr_f, d_alpha_f;
+    s_bgr.convertTo(s_bgr_f, CV_32FC3);
+    d_bgr.convertTo(d_bgr_f, CV_32FC3);
+    s_alpha.convertTo(s_alpha_f, CV_32FC3, 1.0f / 255.0f);
+    d_alpha.convertTo(d_alpha_f, CV_32FC3, 1.0f / 255.0f);
+    
+    cv::Mat tmp_f = s_bgr_f.mul(s_alpha_f, alpha) + d_bgr_f.mul(d_alpha_f, 1.0 - alpha);
+    cv::Mat tmp_i;
+    tmp_f.convertTo(tmp_i, CV_8UC4);
+    
+    cv::cvtColor(tmp_i, d_roi, CV_BGR2BGRA);
 }
 
 void CV_Manual_Control::vehicle_status_callback(const carla_msgs::CarlaEgoVehicleStatusConstPtr &vehicle_status)
@@ -250,132 +291,68 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
     digit[2] %= 10;
 
     for (int i = 0; i < 3; i++) {
-        cv::Point roi_point(
-            (this->screen_size_.width - this->cv_7seg_[0].cols * 3) / 2 + this->cv_7seg_[0].cols * i,
-            this->screen_size_.height - this->cv_7seg_[0].rows
+        this->alpha_blend(
+            this->cv_7seg_[digit[i]],
+            cv_view->image,
+            cv::Point(
+                (this->screen_size_.width - this->cv_7seg_[0].cols * 3) / 2 + this->cv_7seg_[0].cols * i,
+                this->screen_size_.height - this->cv_7seg_[0].rows
+            )
         );
-
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_7seg_[0].cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_7seg_[0].cols);
-        roi_size.height = (roi_point.y + this->cv_7seg_[0].rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_7seg_[0].rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_7seg_[digit[i]](s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
     }
 
-    {
-        cv::Point roi_point(
+    this->alpha_blend(
+        this->cv_kmh_,
+        cv_view->image,
+        cv::Point(
             (this->screen_size_.width + this->cv_7seg_[0].cols * 3) / 2,
             this->screen_size_.height - this->cv_kmh_.rows
-        );
-
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_kmh_.cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_kmh_.cols);
-        roi_size.height = (roi_point.y + this->cv_kmh_.rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_kmh_.rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_kmh_(s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
-    }
-
-    std_msgs::Bool override_msg, enable_autopilot_msg;
-    override_msg.data = this->manual_override_;
-    enable_autopilot_msg.data = this->enable_autopilot_;
-    this->manual_override_pub_.publish(override_msg);
-    this->enable_autopilot_pub_.publish(enable_autopilot_msg);
+        )
+    );
 
     if (this->manual_override_ == true) {
-        cv::Point roi_point(this->cv_steer_.cols / 8, this->screen_size_.height - this->cv_steer_.rows * 9 / 8);
-
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_steer_.cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_steer_.cols);
-        roi_size.height = (roi_point.y + this->cv_steer_.rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_steer_.rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_steer_(s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
+        this->alpha_blend(
+            this->cv_steer_,
+            cv_view->image,
+            cv::Point(this->cv_steer_.cols / 8, this->screen_size_.height - this->cv_steer_.rows * 9 / 8)
+        );
     }
 
     if (this->vehicle_status_queue_.front().control.hand_brake == true) {
-        cv::Point roi_point(this->screen_size_.width * 5 / 8, this->screen_size_.height - this->cockpit_size_full_.height);
-
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_handbrake_.cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_handbrake_.cols);
-        roi_size.height = (roi_point.y + this->cv_handbrake_.rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_handbrake_.rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_handbrake_(s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
+        this->alpha_blend(
+            this->cv_handbrake_,
+            cv_view->image,
+            cv::Point(this->screen_size_.width * 5 / 8, this->screen_size_.height - this->cockpit_size_full_.height)
+        );
     }
 
     if (this->enable_autopilot_ == true) {
-        cv::Point roi_point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height);
-        
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_autopilot_.cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_autopilot_.cols);
-        roi_size.height = (roi_point.y + this->cv_autopilot_.rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_autopilot_.rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_autopilot_(s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
+        this->alpha_blend(
+            this->cv_autopilot_,
+            cv_view->image,
+            cv::Point(this->screen_size_.width * 3 / 8 - this->cv_autopilot_.cols, this->screen_size_.height - this->cockpit_size_full_.height)
+        );
     }
-    else if (this->vehicle_status_queue_.front().control.reverse == true) {
-        cv::Point roi_point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height);
-        
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_reverse_.cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_reverse_.cols);
-        roi_size.height = (roi_point.y + this->cv_reverse_.rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_reverse_.rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_reverse_(s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
+    if (this->vehicle_status_queue_.front().control.reverse == true) {
+        this->alpha_blend(
+            this->cv_reverse_,
+            cv_view->image,
+            cv::Point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height)
+        );
     }
     else if (this->vehicle_status_queue_.front().control.manual_gear_shift == true) {
-        cv::Point roi_point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height);
-
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_gear_[this->vehicle_status_queue_.front().control.gear].cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_gear_[this->vehicle_status_queue_.front().control.gear].cols);
-        roi_size.height = (roi_point.y + this->cv_gear_[this->vehicle_status_queue_.front().control.gear].rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_gear_[this->vehicle_status_queue_.front().control.gear].rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_gear_[this->vehicle_status_queue_.front().control.gear](s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
+        this->alpha_blend(
+            this->cv_gear_[this->vehicle_status_queue_.front().control.gear],
+            cv_view->image,
+            cv::Point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height)
+        );
     }
     else {
-        cv::Point roi_point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height);
-
-        cv::Size roi_size;
-        roi_size.width = (roi_point.x + this->cv_gear_[0].cols > this->screen_size_.width)? (this->screen_size_.width - roi_point.x) : (this->cv_gear_[0].cols);
-        roi_size.height = (roi_point.y + this->cv_gear_[0].rows > this->screen_size_.height)? (this->screen_size_.height - roi_point.y) : (this->cv_gear_[0].rows);
-
-        cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
-        cv::Rect d_roi_rect(roi_point, roi_size);
-        cv::Mat s_roi = this->cv_gear_[0](s_roi_rect);
-        cv::Mat d_roi = cv_view->image(d_roi_rect);
-
-        cv::addWeighted(s_roi, 1.0, d_roi, 0.0, 0.0, d_roi);
+        this->alpha_blend(
+            this->cv_gear_[0],
+            cv_view->image,
+            cv::Point(this->screen_size_.width * 3 / 8, this->screen_size_.height - this->cockpit_size_full_.height)
+        );
     }
 
     cv::imshow(WINDOW_NAME, cv_view->image);
@@ -384,11 +361,17 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
     if (key == static_cast<int>('q')) {
         ros::shutdown();
     }
-    else if (key == static_cast<int>('c')) {
+    else if (key == static_cast<int>('b')) {
         this->manual_override_ = !(this->manual_override_);
+        std_msgs::Bool override_msg, enable_autopilot_msg;
+        override_msg.data = this->manual_override_;
+        this->manual_override_pub_.publish(override_msg);
     }
     else if (key == static_cast<int>('p')) {
         this->enable_autopilot_ = !(this->enable_autopilot_);
+        std_msgs::Bool override_msg, enable_autopilot_msg;
+        enable_autopilot_msg.data = this->enable_autopilot_;
+        this->enable_autopilot_pub_.publish(enable_autopilot_msg);
     }
     else if (key == KEY_F11) {
         if (cv::getWindowProperty(WINDOW_NAME, cv::WND_PROP_FULLSCREEN) == cv::WINDOW_FULLSCREEN) {
