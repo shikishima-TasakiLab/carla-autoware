@@ -3,6 +3,7 @@ from carla_msgs.msg import CarlaEgoVehicleStatus
 from g29_force_feedback.msg import ForceFeedback
 from std_msgs.msg import Bool
 import rospy
+import math
 
 feedback_pub = None
 manual = False
@@ -11,7 +12,7 @@ def vehicle_status_callback(data):
     feedback_msg = ForceFeedback()
     if manual is True:
         feedback_msg.angle = 0.0
-        feedback_msg.force = 0.2
+        feedback_msg.force = min(data.velocity * math.sqrt(abs(data.control.steer)) * 0.1, 1.0)
         feedback_msg.pid_mode = False
     else:
         feedback_msg.angle = data.control.steer
