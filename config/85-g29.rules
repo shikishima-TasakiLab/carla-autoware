@@ -1,0 +1,2 @@
+KERNEL=="event*",ATTRS{name}=="Logitech G29 Driving Force Racing Wheel", MODE="0666", SYMLINK+="input/event-g29"
+KERNEL=="js*",ATTRS{name}=="Logitech G29 Driving Force Racing Wheel", MODE="0666", SYMLINK+="input/js-g29"

@@ -3,12 +3,18 @@
   <arg name='host' default='localhost'/>
   <arg name='port' default='2000'/>
   <arg name='timeout' default='10'/>
-  <arg name="vehicle_filter" default="vehicle.toyota.prius" />
+  <!--<arg name="vehicle_filter" default="vehicle.toyota.prius" />-->
+  <arg name="vehicle_filter" default="vehicle.tesla.model3" />
   <arg name="sensor_definition_file" default="$(find g29_carla)/config/sensors.json"/>
   <arg name="role_name" default="ego_vehicle"/>
   <!-- use comma separated format "x,y,z,roll,pitch,yaw" -->
   <arg name="spawn_point" default=""/>
   <arg name="spawn_ego_vehicle" default="True" />
+  <arg name='town' default=''/>
+
+  <include file="$(find carla_ros_bridge)/launch/carla_ros_bridge.launch">
+    <arg name='town' value='$(arg town)'/>
+  </include>
 
   <include file="$(find carla_ego_vehicle)/launch/carla_ego_vehicle.launch">
     <arg name='host' value='$(arg host)'/>
@@ -41,7 +47,7 @@
     </node>
 
     <node pkg="g29_carla" type="cv_manual_control" name="manual_control" required="true" output="screen">
-      <param name="img_dir" value="/home/autoware/carla_ws/src/g29-wheel/g29_carla/img"/>
+      <param name="img_dir" value="$(find g29_carla)/img"/>
     </node>
   </group>
 
