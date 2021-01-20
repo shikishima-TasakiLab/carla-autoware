@@ -56,7 +56,7 @@ private:
     cv::Mat cv_handbrake_;
     cv::Mat cv_autopilot_;
 
-    void alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left, double_t alpha = 1.0);
+    void alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left = cv::Point(0, 0), double_t alpha = 1.0);
 
     void vehicle_status_callback(const carla_msgs::CarlaEgoVehicleStatusConstPtr &vehicle_status);
     void g29_sub_callback(const sensor_msgs::JoyConstPtr &g29_msg);
@@ -106,7 +106,16 @@ void CV_Manual_Control::alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left,
     roi_size.width = (up_left.x + fg.cols > bg.cols)? (bg.cols - up_left.x) : (fg.cols);
     roi_size.height = (up_left.y + fg.rows > bg.rows)? (bg.rows - up_left.y) : (fg.rows);
 
-    cv::Rect s_roi_rect(cv::Point(0, 0), roi_size);
+    roi_size.width = (up_left.x < 0)? (roi_size.width + up_left.x) : roi_size.width;
+    roi_size.height = (up_left.y < 0)? (roi_size.height + up_left.y) : roi_size.height;
+
+    cv::Rect s_roi_rect(
+        cv::Point(
+            (up_left.x < 0)? (-up_left.x) : 0,
+            (up_left.y < 0)? (-up_left.y) : 0
+        ),
+        roi_size
+    );
     cv::Rect d_roi_rect(up_left, roi_size);
     cv::Mat s_roi = fg(s_roi_rect);
     cv::Mat d_roi = bg(d_roi_rect);
@@ -218,6 +227,12 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
     if (this->view_queue_.size() < 1) {
         return;
     }
+    else if (this->view_queue_.size() > 1) {
+        this->view_queue_.pop_front();
+    }
+    if (this->vehicle_status_queue_.size() > 1) {
+        this->vehicle_status_queue_.pop_front();
+    }
 
     cv_bridge::CvImagePtr cv_view(new cv_bridge::CvImage);
     cv_view = cv_bridge::toCvCopy(this->view_queue_.front(), this->view_queue_.front().encoding);
@@ -234,14 +249,14 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
         for (int i = 0; i < this->cv_7seg_.size(); i++) {
             scale = static_cast<double_t>(this->cockpit_size_full_.height) / static_cast<double_t>(this->cv_7seg_[i].rows);
             cv::resize(this->cv_7seg_[i], this->cv_7seg_[i], cv::Size(
-                static_cast<int>(static_cast<double_t>(this->cv_7seg_[0].cols) * scale),
+                static_cast<int>(static_cast<double_t>(this->cv_7seg_[i].cols) * scale),
                 this->cockpit_size_full_.height
             ));
         }
         for (int i = 0; i < this->cv_gear_.size(); i++) {
             scale = static_cast<double_t>(this->cockpit_size_full_.height) / static_cast<double_t>(this->cv_gear_[i].rows);
             cv::resize(this->cv_gear_[i], this->cv_gear_[i], cv::Size(
-                static_cast<int>(static_cast<double_t>(this->cv_gear_[0].cols) * scale),
+                static_cast<int>(static_cast<double_t>(this->cv_gear_[i].cols) * scale),
                 this->cockpit_size_full_.height
             ));
         }
