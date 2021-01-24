@@ -1,5 +1,7 @@
 #!/bin/bash
 CARLA_VERSION="0.9.10.1"
+G29_JS="/dev/input/js-g29"
+G29_EVENT="/dev/input/event-g29"
 
 RUN_DIR=$(dirname $(readlink -f $0))
 
@@ -9,6 +11,20 @@ if [[ $DOCKER_VERSION < "19.03" ]] && ! type nvidia-docker; then
     RUNTIME="--gpus all"
 else
     RUNTIME="--runtime=nvidia"
+fi
+
+DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${RUN_DIR}/autoware-contents:/home/autoware/autoware-contents:ro"
+DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${RUN_DIR}/ros-bridge:/home/autoware/carla_ws/src/ros-bridge:rw"
+DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${RUN_DIR}/g29-wheel:/home/autoware/carla_ws/src/g29-wheel:rw"
+DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${RUN_DIR}/ws/build:/home/autoware/carla_ws/build:rw"
+DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${RUN_DIR}/ws/devel:/home/autoware/carla_ws/devel:rw"
+DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${RUN_DIR}/shared_dir:/home/autoware/shared_dir:rw"
+
+if [[ -c ${G29_EVENT} ]]; then
+    DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${G29_EVENT}:${G29_EVENT}:rw"
+fi
+if [[ -c ${G29_JS} ]]; then
+    DOCKER_VOLUME="${DOCKER_VOLUME} --volume=${G29_JS}:${G29_JS}:rw"
 fi
 
 gnome-terminal -- \
@@ -22,12 +38,7 @@ gnome-terminal -- \
 gnome-terminal -- \
     docker run \
         -it --rm \
-        --volume=${RUN_DIR}/autoware-contents:/home/autoware/autoware-contents:ro \
-        --volume=${RUN_DIR}/ros-bridge:/home/autoware/ros-bridge:rw \
-        --volume=${RUN_DIR}/g29-wheel:/home/autoware/carla_ws/src/g29-wheel:rw \
-        --volume=${RUN_DIR}/ws/build:/home/autoware/carla_ws/build:rw \
-        --volume=${RUN_DIR}/ws/devel:/home/autoware/carla_ws/devel:rw \
-        --volume=${RUN_DIR}/shared_dir:/home/autoware/shared_dir:rw \
+        ${DOCKER_VOLUME} \
         --env="DISPLAY=${DISPLAY}" \
         --privileged \
         --net=host \

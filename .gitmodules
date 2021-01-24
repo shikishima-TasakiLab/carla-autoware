@@ -8,3 +8,6 @@
 [submodule "g29-wheel/ros-g29-force-feedback"]
 	path = g29-wheel/ros-g29-force-feedback
 	url = https://github.com/shikishima-TasakiLab/ros-g29-force-feedback.git
+[submodule "g29-wheel/g29_carla/include/cmdline"]
+	path = g29-wheel/g29_carla/include/cmdline
+	url = https://github.com/tanakh/cmdline.git

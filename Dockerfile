@@ -54,6 +54,7 @@ RUN apt-get update && \
         libbz2-dev \
         libreadline-dev \
         libsqlite3-dev \
+        rapidjson-dev \
         wget \
         curl \
         llvm \
@@ -87,9 +88,12 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/carla-simulator/carla.git && \
-    cd carla && \
-    git checkout $CARLA_VERSION && \
+ARG CARLA_VERSION
+
+RUN mkdir -p /opt/carla && \
+    cd /opt/carla && \
+    git clone -b $CARLA_VERSION https://github.com/carla-simulator/carla.git src && \
+    cd src && \
     make LibCarla && \
     cd Build && \
     cmake \
@@ -99,12 +103,11 @@ RUN git clone https://github.com/carla-simulator/carla.git && \
         -DLIBCARLA_BUILD_DEBUG=OFF \
         -DLIBCARLA_BUILD_TEST=OFF \
         -DCMAKE_TOOLCHAIN_FILE=./LibStdCppToolChain.cmake \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_PREFIX=/opt/carla \
         .. && \
     ninja && \
     ninja install && \
-    cd ../.. && \
-    rm -rf carla
+    cd ../..
 
 # CARLA Autoware agent
 COPY --chown=autoware . ./carla-autoware

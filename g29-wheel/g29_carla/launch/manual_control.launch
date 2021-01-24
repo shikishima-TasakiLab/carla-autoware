@@ -46,7 +46,7 @@
       <remap from="/feedback" to="/g29/feedback"/>
     </node>
 
-    <node pkg="g29_carla" type="cv_manual_control" name="manual_control" required="true" output="screen">
+    <node pkg="g29_carla" type="ros_manual_control" name="manual_control" required="true" output="screen">
       <param name="img_dir" value="$(find g29_carla)/img"/>
     </node>
   </group>
