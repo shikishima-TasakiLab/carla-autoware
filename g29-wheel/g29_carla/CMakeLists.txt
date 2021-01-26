@@ -146,8 +146,7 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/g29_carla_node.cpp)
-add_executable(ros_manual_control src/ros_manual_control.cpp)
-add_executable(cv_manual_control src/cv_manual_control.cpp)
+add_executable(manual_control src/manual_control.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -163,8 +162,7 @@ add_executable(cv_manual_control src/cv_manual_control.cpp)
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
 # )
-target_link_libraries(ros_manual_control ${catkin_LIBRARIES} ${OpenCV_LIBRARIES})
-target_link_libraries(cv_manual_control ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} Threads::Threads ${CARLA_LIBRARIES})
+target_link_libraries(manual_control ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} Threads::Threads ${CARLA_LIBRARIES})
 
 #############
 ## Install ##
@@ -181,7 +179,7 @@ target_link_libraries(cv_manual_control ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} 
 # )
 
 catkin_install_python(
-  PROGRAMS src/g29_calra/feedback.py src/g29_calra/joy2cmd.py
+  PROGRAMS src/g29_calra/joy2cmd.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

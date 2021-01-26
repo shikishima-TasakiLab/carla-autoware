@@ -2,52 +2,32 @@
 <launch>
   <arg name='host' default='localhost'/>
   <arg name='port' default='2000'/>
-  <arg name='timeout' default='10'/>
-  <!--<arg name="vehicle_filter" default="vehicle.toyota.prius" />-->
-  <arg name="vehicle_filter" default="vehicle.tesla.model3" />
-  <arg name="sensor_definition_file" default="$(find g29_carla)/config/sensors.json"/>
   <arg name="role_name" default="ego_vehicle"/>
-  <!-- use comma separated format "x,y,z,roll,pitch,yaw" -->
-  <arg name="spawn_point" default=""/>
-  <arg name="spawn_ego_vehicle" default="True" />
-  <arg name='town' default=''/>
-
-  <include file="$(find carla_ros_bridge)/launch/carla_ros_bridge.launch">
-    <arg name='town' value='$(arg town)'/>
-  </include>
-
-  <include file="$(find carla_ego_vehicle)/launch/carla_ego_vehicle.launch">
-    <arg name='host' value='$(arg host)'/>
-    <arg name='port' value='$(arg port)'/>
-    <arg name='timeout' value='$(arg timeout)'/>
-    <arg name="vehicle_filter" value='$(arg vehicle_filter)'/>
-    <arg name="sensor_definition_file" value='$(arg sensor_definition_file)'/>
-    <arg name="role_name" value="$(arg role_name)"/>
-    <arg name="spawn_point" value="$(arg spawn_point)"/>
-    <arg name="spawn_ego_vehicle" value="$(arg spawn_ego_vehicle)" />
-  </include>
+  <!-- town : "Town01", "Town02", "Town03", "Town04", "Town05", "random"-->
+  <arg name="town" default="Town03"/>
+  <arg name="width" default="1920"/>
+  <arg name="height" default="1080"/>
 
   <group ns="g29">
-    <node pkg="joy" type="joy_node" name="joy">
-      <param name="coalesce_interval" type="double" value="0.02"/>
-      <param name="default_trig_val" value="true"/>
-      <!-- param name="deadzone" value="0.0"/ -->
-      <param name="dev" value="/dev/input/js0" type="string "/>
-      <param name="deadzone" value="0.05" type="double"/>    
-      <!-- aram name="autorepeat_rate" value="10" type="double"/--> 
-    </node> 
-
-    <node pkg="g29_force_feedback" type="g29_force_feedback_node" name="force_feedback" output="screen">
-      <rosparam command="load" file="$(find g29_force_feedback)/config/g29_force_feedback.yaml"/>
-      <remap from="/ff_target" to="/g29/feedback"/>
-    </node>
-
-    <node pkg="g29_carla" type="feedback.py" name="feedback" output="screen">
-      <remap from="/feedback" to="/g29/feedback"/>
-    </node>
-
-    <node pkg="g29_carla" type="ros_manual_control" name="manual_control" required="true" output="screen">
+    <node pkg="g29_carla" type="cv_manual_control" name="manual_control" required="true" output="screen">
       <param name="img_dir" value="$(find g29_carla)/img"/>
+      <param name="role_name" value="$(arg role_name)"/>
+      <param name="town" value="$(arg town)"/>
+      <param name="sensor_config_path" value="$(find g29_carla)/config/g3od.json"/>
+      <param name="vehicle_filter" value="vehicle.tesla.model3"/>
+      <param name="force_min" value="0.21"/>
+      <param name="host" value="$(arg host)"/>
+      <param name="port" value="$(arg port)"/>
+      <param name="width" value="$(arg width)"/>
+      <param name="height" value="$(arg height)"/>
+      <!--
+        <param name="hz" value="20"/>
+        <param name="kp" value="1.0"/>
+        <param name="ki" value="0.0"/>
+        <param name="kd" value="0.0"/>
+        <param name="force_max" value="1.0"/>
+        <param name="event_path" value="/dev/input/event-g29"/>
+      -->
     </node>
   </group>
 

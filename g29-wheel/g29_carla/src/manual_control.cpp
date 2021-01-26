@@ -32,7 +32,6 @@
 
 #define CV_KEY_F11 200
 #define WINDOW_NAME "CARLA G29"
-#define GEAR_COUNT 5
 #define CHATTERING_COUNT 5
 
 #define SIG_RED 0
@@ -40,8 +39,10 @@
 #define SIG_GREEN 2
 #define SIG_NULL 3
 
-#define AUTOLIGHT_POSITION_TH 110
-#define AUTOLIGHT_BEAM_TH 40
+#define STEER_CO 0.7
+
+#define AUTOLIGHT_POSITION_TH 120
+#define AUTOLIGHT_BEAM_TH 55
 
 class CV_Manual_Control
 {
@@ -52,9 +53,11 @@ public:
         std::string spawn_point = "",
         std::string vehicle_filter = "vehicle.*",
         std::string role_name = "ego_vehicle",
+        std::string town_name = "Town03",
         std::string event_path = "/dev/input/event-g29",
+        pid_params pid = {1.0f, 0.0f, 0.0f, 0.2f, 1.0f},
         double_t hz = 20.0,
-        std::string host = "localhost", u_int16_t port = 2000
+        std::string host = "localhost", u_int16_t port = 2000u
     );
     ~CV_Manual_Control();
 
@@ -65,10 +68,12 @@ public:
     }
 
 private:
-    float hand_brake_pedal_ = -1.0f;
-    int velocity_kmh_ = 0;
+    float hand_brake_pedal_ = 0.0f;
+    float velocity_kmh_ = 0;
     bool enable_autopilot_ = false;
     bool manual_override_ = false;
+    int chattering_ = 0;
+    bool auto_light_ = true;
 
     u_int32_t vehicle_id_ = 0;
     bool vehicle_id_usable_ = false;
@@ -87,6 +92,14 @@ private:
     cv::Mat cv_handbrake_;
     cv::Mat cv_autopilot_;
     cv::Mat cv_sig_frame_;
+    cv::Mat cv_light_arrow_r_;
+    cv::Mat cv_light_arrow_l_;
+    cv::Mat cv_light_fog_;
+    cv::Mat cv_light_high_beam_;
+    cv::Mat cv_light_position_;
+    cv::Mat cv_light_auto_;
+    std::vector<cv::Mat> cv_limit_num_;
+    cv::Mat cv_limit_bg_;
     std::vector<cv::Mat> cv_sig_;
 
     carla::client::Client *carla_client_;
@@ -107,6 +120,9 @@ private:
     ros::Publisher manual_override_pub_;
 
     G29FFB *g29ffb_;
+    carla::client::Vehicle::Control control_;
+    g29_btn_axes tmp_cmd_;
+    uint32_t light_state_ = 0x00000000u;
 
     void load_img(std::string img_dir);
     void change_view(int view_id = 0);
@@ -114,7 +130,9 @@ private:
     void attach_sensors(std::string json_path);
     void draw_velocity(cv::Mat &bg);
     void draw_traffic_light(cv::Mat &bg);
-    void draw_gear_status(bool reverse, int32_t gear, bool use_gear_autobox, cv::Mat &bg);
+    void draw_gear_status(bool reverse, int32_t gear, bool manual_gear_shift, cv::Mat &bg);
+    void draw_light_status(uint32_t light_state, cv::Mat &bg);
+    void draw_traffic_limit(cv::Mat &bg);
     void alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left = cv::Point(0, 0), double_t alpha = 1.0);
     void js_timer_callback(const ros::TimerEvent &e);
     void timer_callback(const ros::TimerEvent &e);
@@ -122,13 +140,15 @@ private:
 
 CV_Manual_Control::CV_Manual_Control(
     std::string img_dir, int width, int height,
-    std::string sensor_config_path, std::string spawn_point,
-    std::string vehicle_filter, std::string role_name, std::string event_path,
-    double_t hz, std::string host, u_int16_t port
+    std::string sensor_config_path, std::string spawn_point, std::string vehicle_filter,
+    std::string role_name, std::string town_name, std::string event_path,
+    pid_params pid, double_t hz, std::string host, u_int16_t port
 )
 {
+    //  Random Generator
     std::mt19937_64 rng((std::random_device())());
 
+    //  Window Setting
     this->cockpit_size_full_.width = width;
     this->cockpit_size_full_.height = height / 10;
     this->cockpit_size_half_.width = width;
@@ -136,34 +156,87 @@ CV_Manual_Control::CV_Manual_Control(
     this->screen_size_.height = height - this->cockpit_size_full_.height;
     this->screen_size_.width = width;
 
+    //  Load Image
     this->load_img(img_dir);
 
+    //  Initialize CARLA
     this->carla_client_ = new carla::client::Client(host, port);
     this->carla_client_->SetTimeout(carla::time_duration::seconds(10));
 
-    this->carla_world_ = new carla::client::World(this->carla_client_->GetWorld());
+    //  Load Town
+    if (town_name == "") {
+        this->carla_world_ = new carla::client::World(this->carla_client_->GetWorld());
+    }
+    else {
+        if (town_name == "random") {
+            town_name = RandomChoice(this->carla_client_->GetAvailableMaps(), rng);
+        }
+        this->carla_world_ = new carla::client::World(this->carla_client_->LoadWorld(town_name));
+        std::cout << "=================================" << std::endl;
+        std::cout << "Map               : " << town_name << std::endl;
+    }
+
+    //  Get Blueprint Lib
     this->carla_bplib_ = this->carla_world_->GetBlueprintLibrary();
 
-    //  車の生成
+    //  Initialize Vehicle
     carla::SharedPtr<carla::client::BlueprintLibrary> vehicles = this->carla_bplib_->Filter(vehicle_filter);
     carla::client::ActorBlueprint vehicle_bp = RandomChoice(*vehicles, rng);
+    std::cout << "=================================" << std::endl;
+    std::cout << "Vehicle           : " << vehicle_bp.GetId() << std::endl;
     if (vehicle_bp.ContainsAttribute("color")) {
         auto &attribute = vehicle_bp.GetAttribute("color");
         vehicle_bp.SetAttribute("color", RandomChoice(attribute.GetRecommendedValues(), rng));
     }
     vehicle_bp.SetAttribute("role_name", role_name);
+    std::cout << "role_name         : " << role_name << std::endl;
     carla::SharedPtr<carla::client::Map> map = this->carla_world_->GetMap();
-    carla::geom::Transform transform = RandomChoice(map->GetRecommendedSpawnPoints(), rng);
+
+    //  Load Spawn Point
+    int spawn_point_first_idx = 0;
+    int spawn_point_last_idx = spawn_point.find_first_of(',');
+    std::vector<float_t> params;
+    while (spawn_point_first_idx < spawn_point.size()) {
+        std::string param(spawn_point, spawn_point_first_idx, spawn_point_last_idx - spawn_point_first_idx);
+        try {
+            float param_f = std::stof(param);
+            params.push_back(param_f);
+        }
+        catch (std::invalid_argument &e) {
+            std::cerr << "ERROR: spawn_point \"" << param << "\" is not Number." << std::endl;
+        }
+        catch (std::out_of_range &e) {
+            std::cerr << "ERROR: spawn_point \"" << param << "\" is out of range." << std::endl;
+        }
+    }
+    carla::geom::Transform transform;
+    if (params.size() == 6) {
+        transform.location.x = params[0];
+        transform.location.y = params[1];
+        transform.location.z = params[2];
+        transform.rotation.roll = params[3];
+        transform.rotation.pitch = params[4];
+        transform.rotation.yaw = params[5];
+    }
+    else {
+        transform = RandomChoice(map->GetRecommendedSpawnPoints(), rng);
+    }
+    std::cout << "spawn_point       : x     : " << transform.location.x << std::endl;
+    std::cout << "                  : y     : " << transform.location.y << std::endl;
+    std::cout << "                  : z     : " << transform.location.z << std::endl;
+    std::cout << "                  : roll  : " << transform.rotation.roll << std::endl;
+    std::cout << "                  : pitch : " << transform.rotation.pitch << std::endl;
+    std::cout << "                  : yaw   : " << transform.rotation.yaw << std::endl;
 
     this->carla_ego_vehicle_ = boost::static_pointer_cast<carla::client::Vehicle>(this->carla_world_->SpawnActor(vehicle_bp, transform));
 
-    //  視点カメラの設定
+    //  Initialize View-Camera
     this->carla_camtf_[0] = carla::geom::Transform{
         carla::geom::Location{-4.5f, 0.0f, 2.8f},
         carla::geom::Rotation{-15.0f, 0.0f, 0.0f}};
     this->carla_camtf_[1] = carla::geom::Transform{
-        carla::geom::Location{4.5f, 0.0f, 2.8f},
-        carla::geom::Rotation{-15.0f, 180.0f, 0.0f}};
+        carla::geom::Location{0.0f, 0.0f, 10.0f},
+        carla::geom::Rotation{-90.0f, 0.0f, 0.0f}};
     this->carla_camtf_[2] = carla::geom::Transform{
         carla::geom::Location{2.0f, 0.0f, 2.0f},
         carla::geom::Rotation{0.0f, 0.0f, 0.0f}};
@@ -174,10 +247,11 @@ CV_Manual_Control::CV_Manual_Control(
     this->view_id_ = 0;
     this->change_view(this->view_id_);
 
-    //  照度センサ(カメラ)の取り付け
+    //  Initialize Bright-Camera
     this->carla_bright_tf_ = carla::geom::Transform{
         carla::geom::Location{0.0f, 0.0f, 2.0f},
-        carla::geom::Rotation{0.0f, -90.0f, 0.0f}};
+        carla::geom::Rotation{-90.0f, 0.0f, 0.0f}
+    };
     
     carla::client::ActorBlueprint bright_bp = *this->carla_bplib_->Find("sensor.camera.rgb");
     bright_bp.SetAttribute("image_size_x", std::to_string(3));
@@ -203,15 +277,27 @@ CV_Manual_Control::CV_Manual_Control(
         this->bright_deque_.push_back(static_cast<int>(cv::mean(cv_bright)[1]));
     });
 
-    //  センサ設定ファイル読み込み
+    //  Attach Sensors
     this->attach_sensors(sensor_config_path);
 
-    this->g29ffb_ = new G29FFB(event_path);
+    this->g29ffb_ = new G29FFB(event_path, pid);
 
+    //  Spawn Window
     cv::namedWindow(WINDOW_NAME, cv::WINDOW_FREERATIO);
     cv::setWindowProperty(WINDOW_NAME, cv::WND_PROP_FULLSCREEN, cv::WINDOW_NORMAL);
     cv::waitKey(1);
 
+    //  Initialize Command
+    this->control_.steer = 0.0f;
+    this->control_.throttle = 0.0f;
+    this->control_.brake = 0.0f;
+    this->control_.gear = 1;
+    this->control_.hand_brake = true;
+    this->control_.manual_gear_shift = false;
+    this->control_.reverse = false;
+    this->carla_ego_vehicle_->ApplyControl(this->control_);
+
+    //  Initialize Thread
     this->manual_override_pub_ = this->nh_.advertise<std_msgs::Bool>("/carla/" + role_name + "/vehicle_control_manual_override", 1);
     this->timer_ = this->nh_.createTimer(ros::Duration(1.0 / hz), &CV_Manual_Control::timer_callback, this);
     this->js_timer_ = this->nh_.createTimer(ros::Duration(0.05), &CV_Manual_Control::js_timer_callback, this);
@@ -246,7 +332,8 @@ void CV_Manual_Control::attach_sensors(std::string json_path)
     if (doc.HasMember("sensors")) {
         if (doc["sensors"].IsArray() == false) return;
 
-        std::cout << "sensors" << std::endl;
+        std::cout << "=================================" << std::endl;
+        std::cout << "Sensors" << std::endl;
         const rapidjson::Value &sensors = doc["sensors"].GetArray();
 
         for (auto& sensor : sensors.GetArray()) {
@@ -258,8 +345,13 @@ void CV_Manual_Control::attach_sensors(std::string json_path)
             if (sensor["x"].IsNumber() == false || sensor["y"].IsNumber() == false || sensor["z"].IsNumber() == false) continue;
             if (sensor["roll"].IsNumber() == false || sensor["pitch"].IsNumber() == false || sensor["yaw"].IsNumber() == false) continue;
 
+            std::cout << "- - - - - - - - - - - - - - - - -" << std::endl;
+
             carla::client::ActorBlueprint sensor_bp = *(this->carla_bplib_->Find(sensor["type"].GetString()));
             sensor_bp.SetAttribute("role_name", sensor["id"].GetString());
+
+            std::cout << "type              : " << sensor["type"].GetString() << std::endl;
+            std::cout << "id                : " << sensor["id"].GetString() << std::endl;
 
             carla::geom::Location sensor_location;
             if (sensor["x"].IsFloat() == true) sensor_location.x = sensor["x"].GetFloat();
@@ -278,7 +370,14 @@ void CV_Manual_Control::attach_sensors(std::string json_path)
             else sensor_rotation.yaw = static_cast<float_t>(sensor["yaw"].GetInt());
 
             carla::geom::Transform sensor_transform(sensor_location, sensor_rotation);
-            
+
+            std::cout << "transform         : x     : " << sensor_transform.location.x << std::endl;
+            std::cout << "                  : y     : " << sensor_transform.location.y << std::endl;
+            std::cout << "                  : z     : " << sensor_transform.location.z << std::endl;
+            std::cout << "                  : roll  : " << sensor_transform.rotation.roll << std::endl;
+            std::cout << "                  : pitch : " << sensor_transform.rotation.pitch << std::endl;
+            std::cout << "                  : yaw   : " << sensor_transform.rotation.yaw << std::endl;
+
             for (rapidjson::Value::ConstMemberIterator itr = sensor.MemberBegin(); itr != sensor.MemberEnd(); itr++) {
                 std::string name = itr->name.GetString();
                 if (name == "type" || name == "id" || name == "x" || name == "y" || name == "z" || name == "roll" || name == "pitch" || name == "yaw") continue;
@@ -292,6 +391,11 @@ void CV_Manual_Control::attach_sensors(std::string json_path)
                 else continue;
 
                 sensor_bp.SetAttribute(name, value);
+                std::cout << name;
+                for (size_t i = name.size(); i < 17; i++) {
+                    std::cout << " ";
+                }
+                std::cout << " : " << value << std::endl;
             }
 
             this->carla_sensors_.push_back(this->carla_world_->SpawnActor(sensor_bp, sensor_transform, this->carla_ego_vehicle_.get()));
@@ -315,7 +419,7 @@ void CV_Manual_Control::load_img(std::string img_dir)
     }
 
     this->cv_gear_.push_back(cv::imread(img_dir + "/gear_d.png", cv::IMREAD_UNCHANGED));
-    for (int i = 1; i <= 5; i ++) {
+    for (int i = 1; i <= GEAR_COUNT; i ++) {
         this->cv_gear_.push_back(cv::imread(img_dir + "/gear_" + std::to_string(i) + ".png", cv::IMREAD_UNCHANGED));
     }
     for (int i = 0; i < this->cv_gear_.size(); i++) {
@@ -378,6 +482,57 @@ void CV_Manual_Control::load_img(std::string img_dir)
             this->cockpit_size_full_.height * 2 / 3
         ));
     }
+
+    this->cv_light_arrow_r_ = cv::imread(img_dir + "/light_arrow.png", cv::IMREAD_UNCHANGED);
+    scale = static_cast<double_t>(this->cockpit_size_half_.height) / static_cast<double_t>(this->cv_light_arrow_r_.rows) * 0.8;
+    cv::resize(this->cv_light_arrow_r_, this->cv_light_arrow_r_, cv::Size(
+        static_cast<int>(static_cast<double_t>(this->cv_light_arrow_r_.cols) * scale),
+        this->cockpit_size_half_.height * 4 / 5
+    ));
+    cv::flip(this->cv_light_arrow_r_, this->cv_light_arrow_l_, 1);
+
+    this->cv_light_fog_ = cv::imread(img_dir + "/light_fog.png", cv::IMREAD_UNCHANGED);
+    scale = static_cast<double_t>(this->cockpit_size_half_.height) / static_cast<double_t>(this->cv_light_fog_.rows) * 0.8;
+    cv::resize(this->cv_light_fog_, this->cv_light_fog_, cv::Size(
+        static_cast<int>(static_cast<double_t>(this->cv_light_fog_.cols) * scale),
+        this->cockpit_size_half_.height * 4 / 5
+    ));
+
+    this->cv_light_high_beam_ = cv::imread(img_dir + "/light_high_beam.png", cv::IMREAD_UNCHANGED);
+    scale = static_cast<double_t>(this->cockpit_size_half_.height) / static_cast<double_t>(this->cv_light_high_beam_.rows) * 0.8;
+    cv::resize(this->cv_light_high_beam_, this->cv_light_high_beam_, cv::Size(
+        static_cast<int>(static_cast<double_t>(this->cv_light_high_beam_.cols) * scale),
+        this->cockpit_size_half_.height * 4 / 5
+    ));
+
+    this->cv_light_position_ = cv::imread(img_dir + "/light_position.png", cv::IMREAD_UNCHANGED);
+    scale = static_cast<double_t>(this->cockpit_size_half_.height) / static_cast<double_t>(this->cv_light_position_.rows) * 0.8;
+    cv::resize(this->cv_light_position_, this->cv_light_position_, cv::Size(
+        static_cast<int>(static_cast<double_t>(this->cv_light_position_.cols) * scale),
+        this->cockpit_size_half_.height * 4 / 5
+    ));
+
+    this->cv_light_auto_ = cv::imread(img_dir + "/light_auto.png", cv::IMREAD_UNCHANGED);
+    scale = static_cast<double_t>(this->cockpit_size_half_.height) / static_cast<double_t>(this->cv_light_auto_.rows) * 0.8;
+    cv::resize(this->cv_light_auto_, this->cv_light_auto_, cv::Size(
+        static_cast<int>(static_cast<double_t>(this->cv_light_auto_.cols) * scale),
+        this->cockpit_size_half_.height * 4 / 5
+    ));
+
+    for (size_t i = 0; i < 10; i++) {
+        this->cv_limit_num_.push_back(cv::imread(img_dir + "/limit_" + std::to_string(i) + ".png", cv::IMREAD_UNCHANGED));
+        scale = static_cast<double_t>(this->cockpit_size_full_.height) / static_cast<double_t>(this->cv_limit_num_.back().rows) * 0.8;
+        cv::resize(this->cv_limit_num_.back(), this->cv_limit_num_.back(), cv::Size(
+            static_cast<int>(static_cast<double_t>(this->cv_limit_num_.back().cols) * scale),
+            this->cockpit_size_full_.height * 4 / 5
+        ));
+    }
+    this->cv_limit_bg_ = cv::imread(img_dir + "/limit_bg.png", cv::IMREAD_UNCHANGED);
+    scale = static_cast<double_t>(this->cockpit_size_full_.height) / static_cast<double_t>(this->cv_limit_bg_.rows) * 0.8;
+    cv::resize(this->cv_limit_bg_, this->cv_limit_bg_, cv::Size(
+        static_cast<int>(static_cast<double_t>(this->cv_limit_bg_.cols) * scale),
+        this->cockpit_size_full_.height * 4 / 5
+    ));
 }
 
 int CV_Manual_Control::get_brightness(cv::Mat &src)
@@ -389,24 +544,147 @@ int CV_Manual_Control::get_brightness(cv::Mat &src)
 
 void CV_Manual_Control::js_timer_callback(const ros::TimerEvent &e)
 {
-    carla::geom::Vector3D velocity = this->carla_ego_vehicle_->GetVelocity();
-    carla::client::Vehicle::Control control = this->carla_ego_vehicle_->GetControl();
-
-    g29ffb_->speed_.push_back(roundf(sqrtf(powf32(velocity.x, 2.0f) + powf32(velocity.y, 2.0f) + powf32(velocity.z, 2.0f)) * 3.6f));
-    g29ffb_->target_.push_back(control.steer);
-
     g29_btn_axes cmd = this->g29ffb_->cmd_deque_.back();
-    control.steer = cmd.steer;
-    control.brake = cmd.brake;
-    control.throttle = cmd.throttle;
+    double steer = static_cast<double>(cmd.steer);
+    this->control_.steer = static_cast<float>(std::pow(steer, 3.0) * STEER_CO + (1.0 - STEER_CO) * steer);
+    this->control_.brake = cmd.brake;
+    this->control_.throttle = cmd.throttle;
 
-    this->carla_ego_vehicle_->ApplyControl(control);
+    if (this->control_.brake > 0.0f) this->light_state_ |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Brake);
+    else this->light_state_ &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::Brake));
 
-    while (this->g29ffb_->cmd_deque_.size() > 1) this->g29ffb_->cmd_deque_.pop_front();
+    if (this->hand_brake_pedal_ < cmd.clutch && 1.0f <= cmd.clutch) {
+        this->control_.hand_brake = !this->control_.hand_brake;
+    }
+    this->hand_brake_pedal_ = cmd.clutch;
+
+    if (this->chattering_ < 1) {
+        if (this->velocity_kmh_ <= 0.1f) {
+            if (this->control_.manual_gear_shift == true) {
+                if (cmd.paddle_minus == true && this->tmp_cmd_.paddle_minus == false) {
+                    if (this->control_.gear > 1) {
+                        this->control_.gear--;
+                    }
+                    else if (this->control_.gear == 1) {
+                        this->control_.manual_gear_shift = false;
+                    }
+                    this->chattering_ = CHATTERING_COUNT;
+                }
+                else if (cmd.paddle_plus == true && this->tmp_cmd_.paddle_plus == false) {
+                    if (this->control_.gear < GEAR_COUNT) {
+                        this->control_.gear++;
+                    }
+                    this->chattering_ = CHATTERING_COUNT;
+                }
+            }
+            else {
+                if (cmd.paddle_plus == true && this->tmp_cmd_.paddle_plus == false) {
+                    this->control_.manual_gear_shift = true;
+                    this->control_.gear = 1;
+                    this->chattering_ = CHATTERING_COUNT;
+                }
+            }
+
+            if (cmd.plus == true && this->tmp_cmd_.plus == false) {
+                this->control_.gear = 1;
+                this->control_.reverse = false;
+                this->chattering_ = CHATTERING_COUNT;
+            }
+            else if (cmd.minus == true && this->tmp_cmd_.minus == false) {
+                this->control_.gear = -1;
+                this->control_.reverse = true;
+                this->chattering_ = CHATTERING_COUNT;
+            }
+        }
+        else {
+            if (this->control_.manual_gear_shift == true) {
+                if (cmd.paddle_minus == true && this->tmp_cmd_.paddle_minus == false) {
+                    if (this->control_.gear > 1) {
+                        this->control_.gear--;
+                    }
+                    this->chattering_ = CHATTERING_COUNT;
+                }
+                else if (cmd.paddle_plus == true && this->tmp_cmd_.paddle_plus == false) {
+                    if (this->control_.gear < GEAR_COUNT) {
+                        this->control_.gear++;
+                    }
+                    this->chattering_ = CHATTERING_COUNT;
+                }
+            }
+        }
+
+        if (cmd.l2 == true && this->tmp_cmd_.l2 == false) {
+            this->light_state_ ^= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Fog);
+            this->chattering_ = CHATTERING_COUNT;
+        }
+
+        if (cmd.share == true && this->tmp_cmd_.share == false) {
+            this->auto_light_ = !this->auto_light_;
+            this->chattering_ = CHATTERING_COUNT;
+        }
+
+        if (this->auto_light_ == false) {
+            if (cmd.r2 == true && this->tmp_cmd_.r2 == false) {
+                if ((this->light_state_ & static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam)) > 0) {
+                    this->light_state_ &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam));
+                    this->light_state_ |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::HighBeam);
+                }
+                else if ((this->light_state_ & static_cast<u_int32_t>(carla::client::Vehicle::LightState::HighBeam)) > 0) {
+                    this->light_state_ &= ~(
+                        static_cast<u_int32_t>(carla::client::Vehicle::LightState::HighBeam) | static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position)
+                    );
+                }
+                else if ((this->light_state_ & static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position)) > 0) {
+                    this->light_state_ |= (
+                        static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam) | static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position)
+                    );
+                }
+                else {
+                    this->light_state_ |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position);
+                }
+                this->chattering_ = CHATTERING_COUNT;
+            }
+        }
+        else {
+            if (cmd.r2 == true && this->tmp_cmd_.r2 == false) {
+                this->light_state_ ^= (
+                    static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam) | static_cast<u_int32_t>(carla::client::Vehicle::LightState::HighBeam)
+                );
+                this->chattering_ = CHATTERING_COUNT;
+            }
+        }
+
+        if (cmd.r3 == true && this->tmp_cmd_.r3 == false) {
+            this->light_state_ ^= static_cast<u_int32_t>(carla::client::Vehicle::LightState::RightBlinker);
+            this->chattering_ = CHATTERING_COUNT;
+        }
+        if (cmd.l3 == true && this->tmp_cmd_.l3 == false) {
+            this->light_state_ ^= static_cast<u_int32_t>(carla::client::Vehicle::LightState::LeftBlinker);
+            this->chattering_ = CHATTERING_COUNT;
+        }
+
+        this->tmp_cmd_ = cmd;
+    }
+
+    std::cout << "=================================" << std::endl;
+    std::cout << "steer             : " << this->control_.steer << std::endl;
+    std::cout << "throttle          : " << this->control_.throttle << std::endl;
+    std::cout << "brake             : " << this->control_.brake << std::endl;
+    std::cout << "reverse           : " << std::boolalpha << this->control_.reverse << std::endl;
+    std::cout << "gear              : " << this->control_.gear << std::endl;
+    std::cout << "hand_brake        : " << std::boolalpha << this->control_.hand_brake << std::endl;
+    std::cout << "manual_gear_shift : " << std::boolalpha << this->control_.manual_gear_shift << std::endl;
+
+    this->carla_ego_vehicle_->SetLightState(static_cast<carla::client::Vehicle::LightState>(this->light_state_));
+    this->g29ffb_->clear_cmd_deque();
+    if (this->manual_override_ == false) return;
+
+    this->carla_ego_vehicle_->ApplyControl(this->control_);
 }
 
 void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
 {
+    if (this->chattering_ > 0) this->chattering_--;
     if (this->img_deque_.size() < 1 || this->bright_deque_.size() < 1) {
 
     }
@@ -415,28 +693,26 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
 
         carla::geom::Vector3D velocity = this->carla_ego_vehicle_->GetVelocity();
         carla::client::Vehicle::Control vehicle_state = this->carla_ego_vehicle_->GetControl();
-        carla::client::Vehicle::PhysicsControl vehicle_info = this->carla_ego_vehicle_->GetPhysicsControl();
-        u_int32_t light_state = static_cast<u_int32_t>(this->carla_ego_vehicle_->GetLightState());
-        u_int32_t new_light_state = light_state;
 
-        this->velocity_kmh_ = static_cast<int>(roundf(sqrtf(powf32(velocity.x, 2.0f) + powf32(velocity.y, 2.0f) + powf32(velocity.z, 2.0f)) * 3.6f));
+        this->velocity_kmh_ = roundf(sqrtf(powf32(velocity.x, 2.0f) + powf32(velocity.y, 2.0f) + powf32(velocity.z, 2.0f)) * 3.6f);
+
+        g29ffb_->speed_.push_back(this->velocity_kmh_);
+        g29ffb_->target_.push_back(vehicle_state.steer);
 
         int brightness = std::accumulate(this->bright_deque_.begin(), this->bright_deque_.end(), 0) / this->bright_deque_.size();
 
-        if (brightness < AUTOLIGHT_POSITION_TH) new_light_state |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position);
-        else new_light_state &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position));
+        if (this->auto_light_ == true) {
+            if (brightness < AUTOLIGHT_POSITION_TH) this->light_state_ |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position);
+            else this->light_state_ &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::Position));
 
-        if (brightness < AUTOLIGHT_BEAM_TH) new_light_state |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam);
-        else new_light_state &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam) | static_cast<u_int32_t>(carla::client::Vehicle::LightState::HighBeam));
+            if (brightness < AUTOLIGHT_BEAM_TH) this->light_state_ |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam);
+            else this->light_state_ &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::LowBeam) | static_cast<u_int32_t>(carla::client::Vehicle::LightState::HighBeam));
+        }
+        //cv::putText(cv_cockpit, std::to_string(brightness), cv::Point(this->cockpit_size_half_.width * 7 / 8, this->cockpit_size_half_.height), cv::HersheyFonts::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(255,255,255,255));
 
-        if (vehicle_state.brake > 0.0f) new_light_state |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Brake);
-        else new_light_state &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::Brake));
+        if (vehicle_state.reverse == true) this->light_state_ |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Reverse);
+        else this->light_state_ &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::Reverse));
         
-        if (vehicle_state.reverse == true) new_light_state |= static_cast<u_int32_t>(carla::client::Vehicle::LightState::Reverse);
-        else new_light_state &= ~(static_cast<u_int32_t>(carla::client::Vehicle::LightState::Reverse));
-        
-        if (new_light_state != light_state) this->carla_ego_vehicle_->SetLightState(static_cast<carla::client::Vehicle::LightState>(new_light_state));
-
         this->draw_velocity(cv_cockpit);
 
         if (vehicle_state.hand_brake == true) {
@@ -449,7 +725,11 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
 
         this->draw_traffic_light(cv_cockpit);
 
-        this->draw_gear_status(vehicle_state.reverse, vehicle_state.gear, vehicle_info.use_gear_autobox, cv_cockpit);
+        this->draw_traffic_limit(cv_cockpit);
+
+        this->draw_gear_status(vehicle_state.reverse, vehicle_state.gear, vehicle_state.manual_gear_shift, cv_cockpit);
+
+        this->draw_light_status(this->light_state_, cv_cockpit);
 
         if (this->enable_autopilot_ == true) {
             this->alpha_blend(
@@ -468,7 +748,7 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
         }
 
         cv::Mat cv_display;
-        cv::vconcat(this->img_deque_.front(), cv_cockpit, cv_display);
+        cv::vconcat(this->img_deque_.back(), cv_cockpit, cv_display);
 
         cv::imshow(WINDOW_NAME, cv_display);
     }
@@ -511,7 +791,43 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
     }
 }
 
-void CV_Manual_Control::draw_gear_status(bool reverse, int32_t gear, bool use_gear_autobox, cv::Mat &bg)
+void CV_Manual_Control::draw_light_status(uint32_t light_state, cv::Mat &bg)
+{
+    int draw_col = this->cockpit_size_half_.width * 5 / 8;
+    int draw_row = this->cockpit_size_half_.height * 11 / 10;
+    int draw_space = this->cockpit_size_half_.height / 5;
+
+    if ((light_state & static_cast<uint32_t>(carla::client::Vehicle::LightState::LeftBlinker)) > 0) {
+        this->alpha_blend(this->cv_light_arrow_l_, bg, cv::Point(draw_col, draw_row));
+    }
+    draw_col += this->cv_light_arrow_l_.cols + draw_space;
+
+    if ((light_state & static_cast<uint32_t>(carla::client::Vehicle::LightState::RightBlinker)) > 0) {
+        this->alpha_blend(this->cv_light_arrow_r_, bg, cv::Point(draw_col, draw_row));
+    }
+    draw_col += this->cv_light_arrow_r_.cols + draw_space;
+
+    if (this->auto_light_ == true) {
+        this->alpha_blend(this->cv_light_auto_, bg, cv::Point(draw_col, draw_row));
+    }
+    draw_col += this->cv_light_auto_.cols + draw_space;
+    
+    if ((light_state & (static_cast<uint32_t>(carla::client::Vehicle::LightState::Position) | static_cast<uint32_t>(carla::client::Vehicle::LightState::LowBeam))) > 0) {
+        this->alpha_blend(this->cv_light_position_, bg, cv::Point(draw_col, draw_row));
+    }
+    draw_col += this->cv_light_position_.cols + draw_space;
+    
+    if ((light_state & static_cast<uint32_t>(carla::client::Vehicle::LightState::HighBeam)) > 0) {
+        this->alpha_blend(this->cv_light_high_beam_, bg, cv::Point(draw_col, draw_row));
+    }
+    draw_col += this->cv_light_high_beam_.cols + draw_space;
+    
+    if ((light_state & static_cast<uint32_t>(carla::client::Vehicle::LightState::Fog)) > 0) {
+        this->alpha_blend(this->cv_light_fog_, bg, cv::Point(draw_col, draw_row));
+    }    
+}
+
+void CV_Manual_Control::draw_gear_status(bool reverse, int32_t gear, bool manual_gear_shift, cv::Mat &bg)
 {
     cv::Mat gear_info;
     if (reverse == true) {
@@ -529,16 +845,16 @@ void CV_Manual_Control::draw_gear_status(bool reverse, int32_t gear, bool use_ge
             this->view_id_ %= 4;
             this->change_view(this->view_id_);
         }
-        if (use_gear_autobox == true) gear_info = this->cv_gear_[0];
+        if (manual_gear_shift == false) gear_info = this->cv_gear_[0];
         else {
-            int gear_num = std::min(std::max(1, gear), 5);
+            int gear_num = std::min(std::max(1, gear), GEAR_COUNT);
             gear_info = this->cv_gear_[gear_num];
         }
     }
     this->alpha_blend(
         gear_info,
         bg,
-        cv::Point(this->screen_size_.width * 3 / 8, 0)
+        cv::Point(this->cockpit_size_half_.width * 3 / 8, 0)
     );
 }
 
@@ -547,7 +863,7 @@ void CV_Manual_Control::draw_velocity(cv::Mat &bg)
     int velocity_digit[3];
     velocity_digit[0] = this->velocity_kmh_ / 100;
     if (velocity_digit[0] == 0 && this->velocity_kmh_ < 100) velocity_digit[0] = 10;
-    velocity_digit[2] = this->velocity_kmh_ % 100;
+    velocity_digit[2] = static_cast<int>(this->velocity_kmh_) % 100;
     velocity_digit[1] = velocity_digit[2] / 10;
     if (velocity_digit[1] == 0 && this->velocity_kmh_ < 10) velocity_digit[1] = 10;
     velocity_digit[2] %= 10;
@@ -585,6 +901,30 @@ void CV_Manual_Control::draw_traffic_light(cv::Mat &bg)
         else if (i == 2 && traffic_light_state == static_cast<u_int8_t>(carla::rpc::TrafficLightState::Red)) sig_index = SIG_RED;
         else sig_index = SIG_NULL;
         this->alpha_blend(this->cv_sig_[sig_index], bg, point);
+    }
+}
+
+void CV_Manual_Control::draw_traffic_limit(cv::Mat &bg)
+{
+    int speed_limit = static_cast<int>(roundf(this->carla_ego_vehicle_->GetSpeedLimit()));
+    int digit_cnt;
+    int x = (this->cockpit_size_full_.width * 3 - this->cv_limit_bg_.cols) / 8 - this->cv_autopilot_.cols;
+
+    this->alpha_blend(this->cv_limit_bg_, bg, cv::Point(x - this->cv_limit_bg_.cols, this->cockpit_size_full_.height / 10));
+
+    if (speed_limit < 10) digit_cnt = 1;
+    else if (speed_limit < 100) digit_cnt = 2;
+    else digit_cnt = 3;
+
+    for (int i = 0; i < digit_cnt; i++) {
+        int digit = (speed_limit % static_cast<int>(std::pow(10.0, static_cast<double_t>(i + 1)))) / static_cast<int>(std::pow(10.0, static_cast<double_t>(i)));
+        this->alpha_blend(
+            this->cv_limit_num_[digit], bg,
+            cv::Point(
+                x - (this->cv_limit_bg_.cols + this->cv_limit_num_[0].cols * digit_cnt) / 2 + this->cv_limit_num_[0].cols * (digit_cnt - i - 1),
+                this->cockpit_size_full_.height / 10
+            )
+        );
     }
 }
 
@@ -663,9 +1003,10 @@ void CV_Manual_Control::alpha_blend(cv::Mat &fg, cv::Mat &bg, cv::Point up_left,
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "cv_manual_control");
+    ros::init(argc, argv, "manual_control");
     ros::NodeHandle pnh("~");
 
+    std::string town_name = "Town03";
     std::string role_name = "ego_vehicle";
     std::string img_dir = "img";
     double_t hz = 20.0;
@@ -676,9 +1017,11 @@ int main(int argc, char** argv)
     std::string vehicle_filter = "vehicle.*";
     std::string event_path = "/dev/input/event-g29";
     std::string host = "localhost";
+    pid_params pid;
     int port = 2000u;
 
     pnh.getParam("role_name", role_name);
+    pnh.getParam("town", town_name);
     pnh.getParam("img_dir", img_dir);
     pnh.getParam("hz", hz);
     pnh.getParam("width", width);
@@ -689,12 +1032,17 @@ int main(int argc, char** argv)
     pnh.getParam("event_path", event_path);
     pnh.getParam("host", host);
     pnh.getParam("port", port);
+    pnh.getParam("kp", pid.kp);
+    pnh.getParam("ki", pid.ki);
+    pnh.getParam("kd", pid.kd);
+    pnh.getParam("force_min", pid.force_min);
+    pnh.getParam("force_max", pid.force_max);
 
     try {
         CV_Manual_Control cmc(
             img_dir, width, height,
             sensor_config_path, spawn_point, vehicle_filter,
-            role_name, event_path, hz,
+            role_name, town_name, event_path, pid, hz,
             host, static_cast<uint16_t>(port)
         );
         ros::spin();
