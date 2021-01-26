@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 #include <deque>
+#include <mutex>
 
 #define GEAR_COUNT 6
 
@@ -60,21 +61,25 @@ class G29FFB
 public:
     G29FFB(std::string event_path, pid_params pid = {1.0f, 0.0f, 0.0f, 0.2f, 1.0f}, bool manual_control = false);
     ~G29FFB();
-    bool manual_control_ = false;
-    std::deque<float> target_ = {0.0f};
-    std::deque<float> speed_ = {0.0f};
 
-    std::deque<g29_btn_axes> cmd_deque_;
-
-    void clear_cmd_deque();
+    void set_manual_control(bool manual_control);
+    void set_speed(float speed);
+    void set_target(float target);
+    g29_btn_axes get_cmd();
 
 private:
+    std::mutex mtx_;
+
     int32_t event_handle_;
     int32_t axis_max_;
     int32_t axis_min_;
     struct ff_effect effect_spring_;
     struct ff_effect effect_damper_;
     struct ff_effect effect_constant_;
+
+    bool manual_control_ = false;
+    float target_ = 0.0f;
+    float speed_ = 0.0f;
 
     pid_params pid_;
 
@@ -100,6 +105,29 @@ G29FFB::~G29FFB()
 {
     this->terminate_ = true;
     this->loop_thread->join();
+}
+
+void G29FFB::set_manual_control(bool manual_control)
+{
+    std::lock_guard<std::mutex> lock(this->mtx_);
+    this->manual_control_ = manual_control;
+}
+
+void G29FFB::set_speed(float speed)
+{
+    std::lock_guard<std::mutex> lock(this->mtx_);
+    this->speed_ = speed;
+}
+
+void G29FFB::set_target(float target)
+{
+    std::lock_guard<std::mutex> lock(this->mtx_);
+    this->target_ = target;
+}
+
+g29_btn_axes G29FFB::get_cmd()
+{
+    return this->cmd_;
 }
 
 int32_t G29FFB::initDevice(std::string event_path)
@@ -248,75 +276,75 @@ void G29FFB::loop()
     float diff = 0.0f;
     float diff_i = 0.0f;
     while(!this->terminate_) {
-        bool update = false;
-        while (read(this->event_handle_, &i_event, sizeof(i_event)) == sizeof(i_event)) {
-            if (i_event.type == EV_ABS) {
-                if (i_event.code == ABS_X)
-                    this->cmd_.steer = static_cast<float>(i_event.value) / static_cast<float>(UINT16_MAX) * 2.0f - 1.0f;
-                else if (i_event.code == ABS_Y)
-                    this->cmd_.clutch = 1.0f - static_cast<float>(i_event.value) / 255.0f;
-                else if (i_event.code == ABS_Z)
-                    this->cmd_.throttle = 1.0f - static_cast<float>(i_event.value) / 255.0f;
-                else if (i_event.code == ABS_RZ)
-                    this->cmd_.brake = 1.0f - static_cast<float>(i_event.value) / 255.0f;
-                else if (i_event.code == ABS_HAT0X) {
-                    if (i_event.value > 0) this->cmd_.d_pad_right = true;
-                    else if (i_event.value < 0) this->cmd_.d_pad_left = true;
+        {
+            std::lock_guard<std::mutex> lock(this->mtx_);
+            
+            while (read(this->event_handle_, &i_event, sizeof(i_event)) == sizeof(i_event)) {
+                if (i_event.type == EV_ABS) {
+                    if (i_event.code == ABS_X)
+                        this->cmd_.steer = static_cast<float>(i_event.value) / static_cast<float>(UINT16_MAX) * 2.0f - 1.0f;
+                    else if (i_event.code == ABS_Y)
+                        this->cmd_.clutch = 1.0f - static_cast<float>(i_event.value) / 255.0f;
+                    else if (i_event.code == ABS_Z)
+                        this->cmd_.throttle = 1.0f - static_cast<float>(i_event.value) / 255.0f;
+                    else if (i_event.code == ABS_RZ)
+                        this->cmd_.brake = 1.0f - static_cast<float>(i_event.value) / 255.0f;
+                    else if (i_event.code == ABS_HAT0X) {
+                        if (i_event.value > 0) this->cmd_.d_pad_right = true;
+                        else if (i_event.value < 0) this->cmd_.d_pad_left = true;
+                    }
+                    else if (i_event.code == ABS_HAT0Y) {
+                        if (i_event.value > 0) this->cmd_.d_pad_down = true;
+                        else if (i_event.value < 0) this->cmd_.d_pad_up = true;
+                    }
                 }
-                else if (i_event.code == ABS_HAT0Y) {
-                    if (i_event.value > 0) this->cmd_.d_pad_down = true;
-                    else if (i_event.value < 0) this->cmd_.d_pad_up = true;
+                else if (i_event.type == EV_KEY) {
+                    if (i_event.value > 0) {
+                        if (i_event.code == BTN_TRIGGER) this->cmd_.cross = true;
+                        else if (i_event.code == BTN_THUMB) this->cmd_.square = true;
+                        else if (i_event.code == BTN_THUMB2) this->cmd_.circle = true;
+                        else if (i_event.code == BTN_TOP) this->cmd_.triangle = true;
+                        else if (i_event.code == BTN_TOP2) this->cmd_.paddle_plus = true;
+                        else if (i_event.code == BTN_PINKIE) this->cmd_.paddle_minus = true;
+                        else if (i_event.code == BTN_BASE) this->cmd_.r2 = true;
+                        else if (i_event.code == BTN_BASE2) this->cmd_.l2 = true;
+                        else if (i_event.code == BTN_BASE3) this->cmd_.share = true;
+                        else if (i_event.code == BTN_BASE4) this->cmd_.options = true;
+                        else if (i_event.code == BTN_BASE5) this->cmd_.r3 = true;
+                        else if (i_event.code == BTN_BASE6) this->cmd_.l3 = true;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY4) this->cmd_.plus = true;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY5) this->cmd_.minus = true;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY6) this->cmd_.encoder_cw = true;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY7) this->cmd_.encoder_ccw = true;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY8) this->cmd_.enter = true;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY9) this->cmd_.play_station = true;
+                    }
+                    else {
+                        if (i_event.code == BTN_TRIGGER) this->cmd_.cross = false;
+                        else if (i_event.code == BTN_THUMB) this->cmd_.square = false;
+                        else if (i_event.code == BTN_THUMB2) this->cmd_.circle = false;
+                        else if (i_event.code == BTN_TOP) this->cmd_.triangle = false;
+                        else if (i_event.code == BTN_TOP2) this->cmd_.paddle_plus = false;
+                        else if (i_event.code == BTN_PINKIE) this->cmd_.paddle_minus = false;
+                        else if (i_event.code == BTN_BASE) this->cmd_.r2 = false;
+                        else if (i_event.code == BTN_BASE2) this->cmd_.l2 = false;
+                        else if (i_event.code == BTN_BASE3) this->cmd_.share = false;
+                        else if (i_event.code == BTN_BASE4) this->cmd_.options = false;
+                        else if (i_event.code == BTN_BASE5) this->cmd_.r3 = false;
+                        else if (i_event.code == BTN_BASE6) this->cmd_.l3 = false;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY4) this->cmd_.plus = false;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY5) this->cmd_.minus = false;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY6) this->cmd_.encoder_cw = false;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY7) this->cmd_.encoder_ccw = false;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY8) this->cmd_.enter = false;
+                        else if (i_event.code == BTN_TRIGGER_HAPPY9) this->cmd_.play_station = false;
+                    }
                 }
-                update = true;
-            }
-            else if (i_event.type == EV_KEY) {
-                if (i_event.value > 0) {
-                    if (i_event.code == BTN_TRIGGER) this->cmd_.cross = true;
-                    else if (i_event.code == BTN_THUMB) this->cmd_.square = true;
-                    else if (i_event.code == BTN_THUMB2) this->cmd_.circle = true;
-                    else if (i_event.code == BTN_TOP) this->cmd_.triangle = true;
-                    else if (i_event.code == BTN_TOP2) this->cmd_.paddle_plus = true;
-                    else if (i_event.code == BTN_PINKIE) this->cmd_.paddle_minus = true;
-                    else if (i_event.code == BTN_BASE) this->cmd_.r2 = true;
-                    else if (i_event.code == BTN_BASE2) this->cmd_.l2 = true;
-                    else if (i_event.code == BTN_BASE3) this->cmd_.share = true;
-                    else if (i_event.code == BTN_BASE4) this->cmd_.options = true;
-                    else if (i_event.code == BTN_BASE5) this->cmd_.r3 = true;
-                    else if (i_event.code == BTN_BASE6) this->cmd_.l3 = true;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY4) this->cmd_.plus = true;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY5) this->cmd_.minus = true;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY6) this->cmd_.encoder_cw = true;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY7) this->cmd_.encoder_ccw = true;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY8) this->cmd_.enter = true;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY9) this->cmd_.play_station = true;
-                }
-                else {
-                    if (i_event.code == BTN_TRIGGER) this->cmd_.cross = false;
-                    else if (i_event.code == BTN_THUMB) this->cmd_.square = false;
-                    else if (i_event.code == BTN_THUMB2) this->cmd_.circle = false;
-                    else if (i_event.code == BTN_TOP) this->cmd_.triangle = false;
-                    else if (i_event.code == BTN_TOP2) this->cmd_.paddle_plus = false;
-                    else if (i_event.code == BTN_PINKIE) this->cmd_.paddle_minus = false;
-                    else if (i_event.code == BTN_BASE) this->cmd_.r2 = false;
-                    else if (i_event.code == BTN_BASE2) this->cmd_.l2 = false;
-                    else if (i_event.code == BTN_BASE3) this->cmd_.share = false;
-                    else if (i_event.code == BTN_BASE4) this->cmd_.options = false;
-                    else if (i_event.code == BTN_BASE5) this->cmd_.r3 = false;
-                    else if (i_event.code == BTN_BASE6) this->cmd_.l3 = false;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY4) this->cmd_.plus = false;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY5) this->cmd_.minus = false;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY6) this->cmd_.encoder_cw = false;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY7) this->cmd_.encoder_ccw = false;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY8) this->cmd_.enter = false;
-                    else if (i_event.code == BTN_TRIGGER_HAPPY9) this->cmd_.play_station = false;
-                }
-                update = true;
             }
         }
-        if (update == true) this->cmd_deque_.push_back(this->cmd_);
 
         if (this->manual_control_ == true) {
-            float speed = this->speed_.back();
+            float speed = this->speed_;
             speed = std::max(0.0f, speed);
 
             int16_t force = 0x0000;
@@ -341,20 +369,20 @@ void G29FFB::loop()
 
             this->effect_spring_.u.condition[0].right_saturation = static_cast<uint16_t>(std::min(speed * 4000.0f, static_cast<float>(UINT16_MAX)));
             this->effect_spring_.u.condition[0].left_saturation = static_cast<uint16_t>(std::min(speed * 4000.0f, static_cast<float>(UINT16_MAX)));
-            this->effect_spring_.u.condition[0].right_coeff = 0x5000;
-            this->effect_spring_.u.condition[0].left_coeff = 0x5000;
-            this->effect_spring_.u.condition[0].center = static_cast<int16_t>(-(this->cmd_deque_.back().steer) * static_cast<float>(INT16_MAX));
+            this->effect_spring_.u.condition[0].right_coeff = 0x4000;
+            this->effect_spring_.u.condition[0].left_coeff = 0x4000;
+            this->effect_spring_.u.condition[0].center = static_cast<int16_t>(-(this->cmd_.steer) * static_cast<float>(INT16_MAX));
             this->effect_spring_.u.condition[1] = this->effect_spring_.u.condition[0];
             if (ioctl(this->event_handle_, EVIOCSFF, &this->effect_spring_) < 0) {
                 std::cerr << "ERROR: failed to upload effect" << std::endl;
             }
         }
         else {
-            float target = this->target_.back();
+            float target = this->target_;
             target = std::max(-1.0f, std::min(1.0f, target));
 
             float buf = diff;
-            diff = target - this->cmd_deque_.back().steer;
+            diff = target - this->cmd_.steer;
             diff_i += diff;
             float diff_d = diff - buf;
 
@@ -395,18 +423,10 @@ void G29FFB::loop()
             }
             tmp_target = target;
         }
-
-        while (this->target_.size() > 1) this->target_.pop_front();
-        while (this->speed_.size() > 1) this->speed_.pop_front();
     }
 }
 
 int32_t G29FFB::testBit(int32_t bit, u_int8_t *array)
 {
     return ((array[bit / (sizeof(u_int8_t) * 8)] >> (bit % (sizeof(u_int8_t) * 8))) & 1);
-}
-
-void G29FFB::clear_cmd_deque()
-{
-    while (this->cmd_deque_.size() > 1) this->cmd_deque_.pop_front();
 }

@@ -9,7 +9,7 @@
   <arg name="height" default="1080"/>
 
   <group ns="g29">
-    <node pkg="g29_carla" type="cv_manual_control" name="manual_control" required="true" output="screen">
+    <node pkg="g29_carla" type="manual_control" name="manual_control" required="true" output="screen">
       <param name="img_dir" value="$(find g29_carla)/img"/>
       <param name="role_name" value="$(arg role_name)"/>
       <param name="town" value="$(arg town)"/>
