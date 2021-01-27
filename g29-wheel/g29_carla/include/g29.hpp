@@ -8,44 +8,72 @@
 #include <thread>
 #include <deque>
 #include <mutex>
+#include <cmath>
 
 #define GEAR_COUNT 6
 
+#define G29_ABS_CODE_STEER        ABS_X
+#define G29_ABS_CODE_CLUTCH       ABS_Y
+#define G29_ABS_CODE_THROTTLE     ABS_Z
+#define G29_ABS_CODE_BRAKE        ABS_RZ
+#define G29_ABS_CODE_DPAD_X       ABS_HAT0X
+#define G29_ABS_CODE_DPAD_Y       ABS_HAT0Y
+
+#define G29_BTN_CODE_CROSS        BTN_TRIGGER
+#define G29_BTN_CODE_SQUARE       BTN_THUMB
+#define G29_BTN_CODE_CIRCLE       BTN_THUMB2
+#define G29_BTN_CODE_TRIANGLE     BTN_TOP
+#define G29_BTN_CODE_PADDLE_PLUS  BTN_TOP2
+#define G29_BTN_CODE_PADDLE_MINUS BTN_PINKIE
+#define G29_BTN_CODE_R2           BTN_BASE
+#define G29_BTN_CODE_L2           BTN_BASE2
+#define G29_BTN_CODE_SHARE        BTN_BASE3
+#define G29_BTN_CODE_OPTIONS      BTN_BASE4
+#define G29_BTN_CODE_R3           BTN_BASE5
+#define G29_BTN_CODE_L3           BTN_BASE6
+#define G29_BTN_CODE_GEAR_1       300u
+#define G29_BTN_CODE_GEAR_2       301u
+#define G29_BTN_CODE_GEAR_3       302u
+#define G29_BTN_CODE_GEAR_4       BTN_DEAD
+#define G29_BTN_CODE_GEAR_5       BTN_TRIGGER_HAPPY1
+#define G29_BTN_CODE_GEAR_6       BTN_TRIGGER_HAPPY2
+#define G29_BTN_CODE_GEAR_R       BTN_TRIGGER_HAPPY3
+#define G29_BTN_CODE_PLUS         BTN_TRIGGER_HAPPY4
+#define G29_BTN_CODE_MINUS        BTN_TRIGGER_HAPPY5
+#define G29_BTN_CODE_DIAL_CW      BTN_TRIGGER_HAPPY6
+#define G29_BTN_CODE_DIAL_CCW     BTN_TRIGGER_HAPPY7
+#define G29_BTN_CODE_ENTER        BTN_TRIGGER_HAPPY8
+#define G29_BTN_CODE_PLAYSTATION  BTN_TRIGGER_HAPPY9
+
 struct g29_btn_axes
 {
-    float steer = 0.0f;         //  type = EV_ABS, code = ABS_X
-    float clutch = 0.0f;        //  type = EV_ABS, code = ABS_Y
-    float throttle = 0.0f;      //  type = EV_ABS, code = ABS_Z
-    float brake = 0.0f;         //  type = EV_ABS, code = ABS_RZ
-    bool d_pad_left = false;    //  type = EV_ABS, code = ABS_HAT0X
-    bool d_pad_right = false;   //  type = EV_ABS, code = ABS_HAT0X
-    bool d_pad_up = false;      //  type = EV_ABS, code = ABS_HAT0Y
-    bool d_pad_down = false;    //  type = EV_ABS, code = ABS_HAT0Y
-    bool cross = false;         //  type = EV_KEY, code = BTN_TRIGGER
-    bool square = false;        //  type = EV_KEY, code = BTN_THUMB
-    bool circle = false;        //  type = EV_KEY, code = BTN_THUMB2
-    bool triangle = false;      //  type = EV_KEY, code = BTN_TOP
-    bool paddle_plus = false;   //  type = EV_KEY, code = BTN_TOP2
-    bool paddle_minus = false;  //  type = EV_KEY, code = BTN_PINKIE
-    bool r2 = false;            //  type = EV_KEY, code = BTN_BASE
-    bool l2 = false;            //  type = EV_KEY, code = BTN_BASE2
-    bool share = false;         //  type = EV_KEY, code = BTN_BASE3
-    bool options = false;       //  type = EV_KEY, code = BTN_BASE4
-    bool r3 = false;            //  type = EV_KEY, code = BTN_BASE5
-    bool l3 = false;            //  type = EV_KEY, code = BTN_BASE6
-    bool gear_1 = false;        //  type =       , code = 
-    bool gear_2 = false;        //  type =       , code = 
-    bool gear_3 = false;        //  type =       , code = 
-    bool gear_4 = false;        //  type =       , code = 
-    bool gear_5 = false;        //  type =       , code = 
-    bool gear_6 = false;        //  type =       , code = 
-    bool gear_r = false;        //  type =       , code = 
-    bool plus = false;          //  type = EV_KEY, code = BTN_TRIGGER_HAPPY4
-    bool minus = false;         //  type = EV_KEY, code = BTN_TRIGGER_HAPPY5
-    bool encoder_cw = false;    //  type = EV_KEY, code = BTN_TRIGGER_HAPPY6
-    bool encoder_ccw = false;   //  type = EV_KEY, code = BTN_TRIGGER_HAPPY7
-    bool enter = false;         //  type = EV_KEY, code = BTN_TRIGGER_HAPPY8
-    bool play_station = false;  //  type = EV_KEY, code = BTN_TRIGGER_HAPPY9
+    float steer = 0.0f;         //  -1.0f <= steer <= 1.0f
+    float clutch = 0.0f;        //  0.0f <= clutch <= 1.0f
+    float throttle = 0.0f;      //  0.0f <= throttle <= 1.0f
+    float brake = 0.0f;         //  0.0f <= brake <= 1.0f
+    bool d_pad_left = false;    //  Press: true, Release: false
+    bool d_pad_right = false;   //  Press: true, Release: false
+    bool d_pad_up = false;      //  Press: true, Release: false
+    bool d_pad_down = false;    //  Press: true, Release: false
+    bool cross = false;         //  Press: true, Release: false
+    bool square = false;        //  Press: true, Release: false
+    bool circle = false;        //  Press: true, Release: false
+    bool triangle = false;      //  Press: true, Release: false
+    bool paddle_plus = false;   //  Press: true, Release: false
+    bool paddle_minus = false;  //  Press: true, Release: false
+    bool r2 = false;            //  Press: true, Release: false
+    bool l2 = false;            //  Press: true, Release: false
+    bool share = false;         //  Press: true, Release: false
+    bool options = false;       //  Press: true, Release: false
+    bool r3 = false;            //  Press: true, Release: false
+    bool l3 = false;            //  Press: true, Release: false
+    char gear = 0;              //  N:0, 1:1, 2:2, 3:3, 4:4, 5:5, 6:6, R:-1
+    bool plus = false;          //  Press: true, Release: false
+    bool minus = false;         //  Press: true, Release: false
+    bool dial_cw = false;       //  Turn Clockwise: false->true->false
+    bool dial_ccw = false;      //  Turn Counter-Clockwise: false->true->false
+    bool enter = false;         //  Press: true, Release: false
+    bool play_station = false;  //  Press: true, Release: false
 };
 
 struct pid_params {
@@ -281,63 +309,97 @@ void G29FFB::loop()
             
             while (read(this->event_handle_, &i_event, sizeof(i_event)) == sizeof(i_event)) {
                 if (i_event.type == EV_ABS) {
-                    if (i_event.code == ABS_X)
+                    if (i_event.code == G29_ABS_CODE_STEER)
                         this->cmd_.steer = static_cast<float>(i_event.value) / static_cast<float>(UINT16_MAX) * 2.0f - 1.0f;
-                    else if (i_event.code == ABS_Y)
+                    else if (i_event.code == G29_ABS_CODE_CLUTCH)
                         this->cmd_.clutch = 1.0f - static_cast<float>(i_event.value) / 255.0f;
-                    else if (i_event.code == ABS_Z)
+                    else if (i_event.code == G29_ABS_CODE_THROTTLE)
                         this->cmd_.throttle = 1.0f - static_cast<float>(i_event.value) / 255.0f;
-                    else if (i_event.code == ABS_RZ)
+                    else if (i_event.code == G29_ABS_CODE_BRAKE)
                         this->cmd_.brake = 1.0f - static_cast<float>(i_event.value) / 255.0f;
-                    else if (i_event.code == ABS_HAT0X) {
-                        if (i_event.value > 0) this->cmd_.d_pad_right = true;
-                        else if (i_event.value < 0) this->cmd_.d_pad_left = true;
+                    else if (i_event.code == G29_ABS_CODE_DPAD_X) {
+                        if (i_event.value > 0) {
+                            this->cmd_.d_pad_right = true;
+                            this->cmd_.d_pad_left = false;
+                        }
+                        else if (i_event.value < 0) {
+                            this->cmd_.d_pad_right = false;
+                            this->cmd_.d_pad_left = true;
+                        }
+                        else {
+                            this->cmd_.d_pad_right = false;
+                            this->cmd_.d_pad_left = false;
+                        }
                     }
-                    else if (i_event.code == ABS_HAT0Y) {
-                        if (i_event.value > 0) this->cmd_.d_pad_down = true;
-                        else if (i_event.value < 0) this->cmd_.d_pad_up = true;
+                    else if (i_event.code == G29_ABS_CODE_DPAD_Y) {
+                        if (i_event.value > 0) {
+                            this->cmd_.d_pad_down = true;
+                            this->cmd_.d_pad_up = false;
+                        }
+                        else if (i_event.value < 0) {
+                            this->cmd_.d_pad_down = false;
+                            this->cmd_.d_pad_up = true;
+                        }
+                        else {
+                            this->cmd_.d_pad_down = false;
+                            this->cmd_.d_pad_up = false;
+                        }
                     }
                 }
                 else if (i_event.type == EV_KEY) {
                     if (i_event.value > 0) {
-                        if (i_event.code == BTN_TRIGGER) this->cmd_.cross = true;
-                        else if (i_event.code == BTN_THUMB) this->cmd_.square = true;
-                        else if (i_event.code == BTN_THUMB2) this->cmd_.circle = true;
-                        else if (i_event.code == BTN_TOP) this->cmd_.triangle = true;
-                        else if (i_event.code == BTN_TOP2) this->cmd_.paddle_plus = true;
-                        else if (i_event.code == BTN_PINKIE) this->cmd_.paddle_minus = true;
-                        else if (i_event.code == BTN_BASE) this->cmd_.r2 = true;
-                        else if (i_event.code == BTN_BASE2) this->cmd_.l2 = true;
-                        else if (i_event.code == BTN_BASE3) this->cmd_.share = true;
-                        else if (i_event.code == BTN_BASE4) this->cmd_.options = true;
-                        else if (i_event.code == BTN_BASE5) this->cmd_.r3 = true;
-                        else if (i_event.code == BTN_BASE6) this->cmd_.l3 = true;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY4) this->cmd_.plus = true;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY5) this->cmd_.minus = true;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY6) this->cmd_.encoder_cw = true;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY7) this->cmd_.encoder_ccw = true;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY8) this->cmd_.enter = true;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY9) this->cmd_.play_station = true;
+                        if (i_event.code == G29_BTN_CODE_CROSS) this->cmd_.cross = true;
+                        else if (i_event.code == G29_BTN_CODE_SQUARE) this->cmd_.square = true;
+                        else if (i_event.code == G29_BTN_CODE_CIRCLE) this->cmd_.circle = true;
+                        else if (i_event.code == G29_BTN_CODE_TRIANGLE) this->cmd_.triangle = true;
+                        else if (i_event.code == G29_BTN_CODE_PADDLE_PLUS) this->cmd_.paddle_plus = true;
+                        else if (i_event.code == G29_BTN_CODE_PADDLE_MINUS) this->cmd_.paddle_minus = true;
+                        else if (i_event.code == G29_BTN_CODE_R2) this->cmd_.r2 = true;
+                        else if (i_event.code == G29_BTN_CODE_L2) this->cmd_.l2 = true;
+                        else if (i_event.code == G29_BTN_CODE_SHARE) this->cmd_.share = true;
+                        else if (i_event.code == G29_BTN_CODE_OPTIONS) this->cmd_.options = true;
+                        else if (i_event.code == G29_BTN_CODE_R3) this->cmd_.r3 = true;
+                        else if (i_event.code == G29_BTN_CODE_L3) this->cmd_.l3 = true;
+                        else if (i_event.code == G29_BTN_CODE_PLUS) this->cmd_.plus = true;
+                        else if (i_event.code == G29_BTN_CODE_MINUS) this->cmd_.minus = true;
+                        else if (i_event.code == G29_BTN_CODE_DIAL_CW) this->cmd_.dial_cw = true;
+                        else if (i_event.code == G29_BTN_CODE_DIAL_CCW) this->cmd_.dial_ccw = true;
+                        else if (i_event.code == G29_BTN_CODE_ENTER) this->cmd_.enter = true;
+                        else if (i_event.code == G29_BTN_CODE_PLAYSTATION) this->cmd_.play_station = true;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_1) this->cmd_.gear = 1;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_2) this->cmd_.gear = 2;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_3) this->cmd_.gear = 3;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_4) this->cmd_.gear = 4;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_5) this->cmd_.gear = 5;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_6) this->cmd_.gear = 6;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_R) this->cmd_.gear = -1;
                     }
                     else {
-                        if (i_event.code == BTN_TRIGGER) this->cmd_.cross = false;
-                        else if (i_event.code == BTN_THUMB) this->cmd_.square = false;
-                        else if (i_event.code == BTN_THUMB2) this->cmd_.circle = false;
-                        else if (i_event.code == BTN_TOP) this->cmd_.triangle = false;
-                        else if (i_event.code == BTN_TOP2) this->cmd_.paddle_plus = false;
-                        else if (i_event.code == BTN_PINKIE) this->cmd_.paddle_minus = false;
-                        else if (i_event.code == BTN_BASE) this->cmd_.r2 = false;
-                        else if (i_event.code == BTN_BASE2) this->cmd_.l2 = false;
-                        else if (i_event.code == BTN_BASE3) this->cmd_.share = false;
-                        else if (i_event.code == BTN_BASE4) this->cmd_.options = false;
-                        else if (i_event.code == BTN_BASE5) this->cmd_.r3 = false;
-                        else if (i_event.code == BTN_BASE6) this->cmd_.l3 = false;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY4) this->cmd_.plus = false;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY5) this->cmd_.minus = false;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY6) this->cmd_.encoder_cw = false;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY7) this->cmd_.encoder_ccw = false;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY8) this->cmd_.enter = false;
-                        else if (i_event.code == BTN_TRIGGER_HAPPY9) this->cmd_.play_station = false;
+                        if (i_event.code == G29_BTN_CODE_CROSS) this->cmd_.cross = false;
+                        else if (i_event.code == G29_BTN_CODE_SQUARE) this->cmd_.square = false;
+                        else if (i_event.code == G29_BTN_CODE_CIRCLE) this->cmd_.circle = false;
+                        else if (i_event.code == G29_BTN_CODE_TRIANGLE) this->cmd_.triangle = false;
+                        else if (i_event.code == G29_BTN_CODE_PADDLE_PLUS) this->cmd_.paddle_plus = false;
+                        else if (i_event.code == G29_BTN_CODE_PADDLE_MINUS) this->cmd_.paddle_minus = false;
+                        else if (i_event.code == G29_BTN_CODE_R2) this->cmd_.r2 = false;
+                        else if (i_event.code == G29_BTN_CODE_L2) this->cmd_.l2 = false;
+                        else if (i_event.code == G29_BTN_CODE_SHARE) this->cmd_.share = false;
+                        else if (i_event.code == G29_BTN_CODE_OPTIONS) this->cmd_.options = false;
+                        else if (i_event.code == G29_BTN_CODE_R3) this->cmd_.r3 = false;
+                        else if (i_event.code == G29_BTN_CODE_L3) this->cmd_.l3 = false;
+                        else if (i_event.code == G29_BTN_CODE_PLUS) this->cmd_.plus = false;
+                        else if (i_event.code == G29_BTN_CODE_MINUS) this->cmd_.minus = false;
+                        else if (i_event.code == G29_BTN_CODE_DIAL_CW) this->cmd_.dial_cw = false;
+                        else if (i_event.code == G29_BTN_CODE_DIAL_CCW) this->cmd_.dial_ccw = false;
+                        else if (i_event.code == G29_BTN_CODE_ENTER) this->cmd_.enter = false;
+                        else if (i_event.code == G29_BTN_CODE_PLAYSTATION) this->cmd_.play_station = false;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_1 && this->cmd_.gear == 1) this->cmd_.gear = 0;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_2 && this->cmd_.gear == 2) this->cmd_.gear = 0;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_3 && this->cmd_.gear == 3) this->cmd_.gear = 0;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_4 && this->cmd_.gear == 4) this->cmd_.gear = 0;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_5 && this->cmd_.gear == 5) this->cmd_.gear = 0;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_6 && this->cmd_.gear == 6) this->cmd_.gear = 0;
+                        else if (i_event.code == G29_BTN_CODE_GEAR_R && this->cmd_.gear == -1) this->cmd_.gear = 0;
                     }
                 }
             }
@@ -387,7 +449,7 @@ void G29FFB::loop()
             float diff_d = diff - buf;
 
             float force_f = this->pid_.kp * diff + this->pid_.ki * diff_i + this->pid_.kd * diff_d;
-            float force_abs = fabs(force_f);
+            float force_abs = std::fabs(force_f);
             float force_pn = (force_f >= 0.0f)? 1.0f : -1.0f;
 
             force_abs = std::max(this->pid_.force_min, std::min(this->pid_.force_max, force_abs));
