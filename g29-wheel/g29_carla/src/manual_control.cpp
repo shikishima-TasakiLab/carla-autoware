@@ -76,6 +76,8 @@ private:
     int chattering_ = 0;
     bool auto_light_ = true;
 
+    bool show_help_ = false;
+
     u_int32_t vehicle_id_ = 0;
     bool vehicle_id_usable_ = false;
 
@@ -728,6 +730,14 @@ void CV_Manual_Control::js_timer_callback(const ros::TimerEvent &e)
             this->set_chattering_count();
         }
 
+        if (cmd.options == true && this->tmp_cmd_.options == false) {
+            {
+                std::lock_guard<std::mutex> lock(this->mtx_);
+                this->show_help_ = !this->show_help_;
+            }
+            this->set_chattering_count();
+        }
+
         this->tmp_cmd_ = cmd;
     }
 
@@ -829,6 +839,11 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
         cv::Mat cv_display;
         cv::vconcat(this->img_deque_.back(), cv_cockpit, cv_display);
 
+        if (this->show_help_ == true) {
+            cv::Mat help_bg = cv::Mat::zeros(this->screen_size_.height, this->screen_size_.width, CV_8UC4);
+            this->alpha_blend(help_bg, cv_display, cv::Point(0, 0), 0.5);
+        }
+
         cv::imshow(WINDOW_NAME, cv_display);
     }
 
@@ -847,6 +862,10 @@ void CV_Manual_Control::timer_callback(const ros::TimerEvent &e)
     }
     else if (key == static_cast<int>('p')) {
         this->set_auto_pilot();
+    }
+    else if (key == static_cast<int>('h')) {
+        std::lock_guard<std::mutex> lock(this->mtx_);
+        this->show_help_ = !this->show_help_;
     }
     else if (key == CV_KEY_F11) {
         if (cv::getWindowProperty(WINDOW_NAME, cv::WND_PROP_FULLSCREEN) == cv::WINDOW_FULLSCREEN) {
