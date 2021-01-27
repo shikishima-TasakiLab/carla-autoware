@@ -8,7 +8,6 @@ project(g29_carla)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  g29_force_feedback
   carla_msgs
   rospy
   roscpp
@@ -114,7 +113,7 @@ set(CARLA_LIBRARIES carla_client;rpc;boost_filesystem;Detour;DetourCrowd;DetourT
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES g29_carla
-#  CATKIN_DEPENDS g29_force_feedback rospy sensor_msgs
+#  CATKIN_DEPENDS rospy sensor_msgs
 #  DEPENDS system_lib
 CATKIN_DEPENDS rospy
 )
